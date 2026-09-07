@@ -42,11 +42,22 @@ def load_schedule(): return pd.DataFrame(supabase.table("schedule").select("*").
 @st.cache_data(ttl=30)
 def load_rosters(): return pd.DataFrame(supabase.table("rosters").select("*").execute().data)
 
+@st.cache_data(ttl=30)
+def load_teams(): return pd.DataFrame(supabase.table("teams").select("*").execute().data)
+
 # Load data into memory
 df_evals = load_evals()
 df_contacts = load_contacts()
 df_schedule = load_schedule()
 df_rosters = load_rosters()
+df_teams = load_teams()
+
+# Combine teams safely to ensure nothing is missed
+all_teams = []
+if not df_teams.empty: all_teams.extend(df_teams['team_name'].dropna().tolist())
+if not df_rosters.empty: all_teams.extend(df_rosters['team_name'].dropna().tolist())
+if not df_evals.empty and 'current_school' in df_evals.columns: all_teams.extend(df_evals['current_school'].dropna().tolist())
+teams_list = sorted(list(set([str(t).strip() for t in all_teams if str(t).strip() != ""])))
 
 # --- 4. TOP-LEVEL METRICS ---
 col1, col2, col3, col4 = st.columns(4)
@@ -69,15 +80,13 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Prospect Database", "📞 Contacts", "🗓️ Schedule"
 ])
 
-# --- TAB 1: EVALUATIONS (Dynamic based on Position & Auto OFP) ---
+# --- TAB 1: EVALUATIONS ---
 with tab1:
     st.subheader("Evaluate Player")
     
-    teams = df_rosters['team_name'].unique().tolist() if not df_rosters.empty else []
     col_t, col_p = st.columns(2)
-    
     with col_t:
-        selected_team = st.selectbox("Select Program / Team", ["-- Select Team --", "➕ Add New Team"] + sorted(teams))
+        selected_team = st.selectbox("Select Program / Team", ["-- Select Team --", "➕ Add New Team"] + teams_list)
         if selected_team == "➕ Add New Team":
             team_input = st.text_input("Enter New Team Name")
         else:
@@ -85,7 +94,7 @@ with tab1:
 
     if team_input and team_input != "-- Select Team --":
         with col_p:
-            if not df_rosters.empty and team_input in teams:
+            if not df_rosters.empty and team_input in teams_list:
                 team_players = df_rosters[df_rosters['team_name'] == team_input]['player_name'].tolist()
             else:
                 team_players = []
@@ -122,7 +131,6 @@ with tab1:
                         bb = st.slider("Breaking Ball", 20, 80, 50, step=5)
                         offspeed = st.slider("Offspeed", 20, 80, 50, step=5)
                     
-                    # Calculate OFP automatically (average rounded to nearest 5)
                     raw_avg = (physical + velo + command + fb + bb + offspeed) / 6
                     overall = int(round(raw_avg / 5.0) * 5)
                     st.markdown(f"### 📊 Calculated OFP: {overall}")
@@ -138,13 +146,16 @@ with tab1:
                     with c3:
                         field = st.slider("Field", 20, 80, 50, step=5)
                         
-                    # Calculate OFP automatically (average rounded to nearest 5)
                     raw_avg = (hit + power + run + arm + field) / 5
                     overall = int(round(raw_avg / 5.0) * 5)
                     st.markdown(f"### 📊 Calculated OFP: {overall}")
                     notes = st.text_area("TrackMan Data & Scouting Notes")
 
                 if st.form_submit_button("💾 Save Player Evaluation"):
+                    # Save new team if added on the fly
+                    if selected_team == "➕ Add New Team" and team_input not in teams_list:
+                        supabase.table("teams").insert({"team_name": team_input}).execute()
+                    
                     if selected_player == "➕ Add New Player On-The-Fly":
                         supabase.table("rosters").insert({
                             "team_name": team_input, "player_name": player_input,
@@ -165,39 +176,53 @@ with tab1:
                     st.success(f"Successfully saved evaluation for {player_input}!")
                     st.cache_data.clear(); time.sleep(0.5); st.rerun()
 
-# --- TAB 2: ROSTERS ---
+# --- TAB 2: ROSTERS & TEAMS ---
 with tab2:
     col_r1, col_r2 = st.columns([1, 2])
     with col_r1:
-        st.subheader("Add to Roster")
+        st.subheader("1. Add Program")
+        with st.form("add_team_form", clear_on_submit=True):
+            new_team = st.text_input("Program / Team Name")
+            if st.form_submit_button("➕ Save Program"):
+                if new_team and new_team not in teams_list:
+                    supabase.table("teams").insert({"team_name": new_team}).execute()
+                    st.success(f"Added {new_team}")
+                    st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                elif new_team in teams_list:
+                    st.info("Team is already in your list.")
+                    
+        st.subheader("2. Add Player")
         with st.form("roster_form", clear_on_submit=True):
-            r_team = st.text_input("Team Name (e.g., Iowa Western CC)")
+            r_team = st.selectbox("Select Team", ["-- Select Team --"] + teams_list)
             r_player = st.text_input("Player Name")
             r_pos = st.selectbox("Primary Position", ["RHP", "LHP", "C", "1B", "MINF", "3B", "OF"])
             r_grad = st.selectbox("Class", ["JUCO Fr.", "JUCO So.", "2026", "2027", "2028", "Transfer"])
             
             if st.form_submit_button("➕ Save Player"):
-                if r_team and r_player:
+                if r_team != "-- Select Team --" and r_player:
                     supabase.table("rosters").insert({
                         "team_name": r_team, "player_name": r_player, 
                         "position": r_pos, "grad_year": r_grad
                     }).execute()
                     st.success(f"Added {r_player} to {r_team}")
                     st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                else:
+                    st.error("Please select a team and enter a player name.")
+
     with col_r2:
         st.subheader("Program Rosters")
         if not df_rosters.empty:
             df_rosters_display = df_rosters.drop(columns=['id', 'created_at'], errors='ignore')
             st.dataframe(df_rosters_display, use_container_width=True, hide_index=True, height=350)
             
-            with st.expander("✏️ Edit or Delete Player from Roster"):
+            with st.expander("✏️ Manage Roster Players"):
                 roster_dict = {f"{r['player_name']} - {r['team_name']}": r for _, r in df_rosters.iterrows()}
                 sel_r = st.selectbox("Select Player to Manage", ["-- Select --"] + list(roster_dict.keys()))
                 
                 if sel_r != "-- Select --":
                     r_row = roster_dict[sel_r]
                     with st.form("edit_roster_form"):
-                        new_rt = st.text_input("Team Name", r_row['team_name'])
+                        new_rt = st.selectbox("Team Name", teams_list, index=teams_list.index(r_row['team_name']) if r_row['team_name'] in teams_list else 0)
                         new_rn = st.text_input("Player Name", r_row['player_name'])
                         
                         pos_opts = ["RHP", "LHP", "C", "1B", "MINF", "3B", "OF"]
@@ -219,6 +244,27 @@ with tab2:
                             st.cache_data.clear(); time.sleep(0.5); st.rerun()
         else:
             st.info("No rosters created yet.")
+            
+        with st.expander("⚙️ Rename or Delete Programs"):
+            if teams_list:
+                sel_t = st.selectbox("Select Program to Manage", ["-- Select --"] + teams_list)
+                if sel_t != "-- Select --":
+                    with st.form("edit_team_form"):
+                        new_t_name = st.text_input("Rename Program", sel_t)
+                        st.caption("⚠️ Renaming a program here automatically updates it across all Rosters and Evaluations.")
+                        
+                        c_up_t, c_del_t = st.columns(2)
+                        if c_up_t.form_submit_button("Rename Program"):
+                            if new_t_name != sel_t:
+                                supabase.table("teams").update({"team_name": new_t_name}).eq("team_name", sel_t).execute()
+                                supabase.table("rosters").update({"team_name": new_t_name}).eq("team_name", sel_t).execute()
+                                supabase.table("evaluations").update({"current_school": new_t_name}).eq("current_school", sel_t).execute()
+                                st.success(f"Renamed to {new_t_name}")
+                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                        if c_del_t.form_submit_button("Delete Program"):
+                            supabase.table("teams").delete().eq("team_name", sel_t).execute()
+                            st.success(f"Deleted {sel_t}")
+                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
 
 # --- TAB 3: PLAYER PROFILES ---
 with tab3:
@@ -260,7 +306,7 @@ with tab3:
             st.markdown("#### Scouting & TrackMan Notes")
             st.info(p_data['notes'] if pd.notna(p_data['notes']) and p_data['notes'] != "" else "No notes provided.")
             
-            with st.expander("⚙️ Manage Evaluation (Edit Notes / Delete)"):
+            with st.expander("⚙️ Manage Evaluation"):
                 with st.form("manage_eval_form"):
                     st.warning("Tool grades are locked once saved. To change grades entirely, delete this evaluation and create a new one.")
                     e_notes = st.text_area("Edit Scouting Notes", p_data['notes'] if pd.notna(p_data['notes']) else "")
