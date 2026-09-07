@@ -152,29 +152,35 @@ with tab1:
                     notes = st.text_area("TrackMan Data & Scouting Notes")
 
                 if st.form_submit_button("💾 Save Player Evaluation"):
-                    # Save new team if added on the fly
-                    if selected_team == "➕ Add New Team" and team_input not in teams_list:
-                        supabase.table("teams").insert({"team_name": team_input}).execute()
-                    
-                    if selected_player == "➕ Add New Player On-The-Fly":
-                        supabase.table("rosters").insert({
-                            "team_name": team_input, "player_name": player_input,
-                            "position": pos_input, "grad_year": grad_input
-                        }).execute()
-                    
-                    data = {
-                        "player_name": player_input, "current_school": team_input, 
-                        "grad_year": grad_input, "position": pos_input, "ofp": overall, "notes": notes
-                    }
-                    if is_pitcher:
-                        data.update({"physical": physical, "velo": velo, "command": command, 
-                                     "fastball": fb, "breaking_ball": bb, "offspeed": offspeed})
-                    else:
-                        data.update({"hit": hit, "power": power, "run": run, "arm": arm, "field": field})
+                    try:
+                        # Save new team if added on the fly safely
+                        if selected_team == "➕ Add New Team" and team_input not in teams_list:
+                            try:
+                                supabase.table("teams").insert({"team_name": team_input}).execute()
+                            except:
+                                pass # Catch constraint duplicate errors silently
                         
-                    supabase.table("evaluations").insert(data).execute()
-                    st.success(f"Successfully saved evaluation for {player_input}!")
-                    st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                        if selected_player == "➕ Add New Player On-The-Fly":
+                            supabase.table("rosters").insert({
+                                "team_name": team_input, "player_name": player_input,
+                                "position": pos_input, "grad_year": grad_input
+                            }).execute()
+                        
+                        data = {
+                            "player_name": player_input, "current_school": team_input, 
+                            "grad_year": grad_input, "position": pos_input, "ofp": overall, "notes": notes
+                        }
+                        if is_pitcher:
+                            data.update({"physical": physical, "velo": velo, "command": command, 
+                                         "fastball": fb, "breaking_ball": bb, "offspeed": offspeed})
+                        else:
+                            data.update({"hit": hit, "power": power, "run": run, "arm": arm, "field": field})
+                            
+                        supabase.table("evaluations").insert(data).execute()
+                        st.success(f"Successfully saved evaluation for {player_input}!")
+                        st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    except Exception as e:
+                        st.error("Error saving evaluation. Please try again.")
 
 # --- TAB 2: ROSTERS & TEAMS ---
 with tab2:
@@ -185,9 +191,12 @@ with tab2:
             new_team = st.text_input("Program / Team Name")
             if st.form_submit_button("➕ Save Program"):
                 if new_team and new_team not in teams_list:
-                    supabase.table("teams").insert({"team_name": new_team}).execute()
-                    st.success(f"Added {new_team}")
-                    st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    try:
+                        supabase.table("teams").insert({"team_name": new_team}).execute()
+                        st.success(f"Added {new_team}")
+                        st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    except Exception as e:
+                        st.warning("Could not add team. It might already exist.")
                 elif new_team in teams_list:
                     st.info("Team is already in your list.")
                     
@@ -200,12 +209,15 @@ with tab2:
             
             if st.form_submit_button("➕ Save Player"):
                 if r_team != "-- Select Team --" and r_player:
-                    supabase.table("rosters").insert({
-                        "team_name": r_team, "player_name": r_player, 
-                        "position": r_pos, "grad_year": r_grad
-                    }).execute()
-                    st.success(f"Added {r_player} to {r_team}")
-                    st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    try:
+                        supabase.table("rosters").insert({
+                            "team_name": r_team, "player_name": r_player, 
+                            "position": r_pos, "grad_year": r_grad
+                        }).execute()
+                        st.success(f"Added {r_player} to {r_team}")
+                        st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    except Exception as e:
+                        st.error("Error adding player.")
                 else:
                     st.error("Please select a team and enter a player name.")
 
@@ -235,13 +247,19 @@ with tab2:
                         
                         c_up, c_del = st.columns(2)
                         if c_up.form_submit_button("Update Player"):
-                            supabase.table("rosters").update({"team_name": new_rt, "player_name": new_rn, "position": new_rp, "grad_year": new_rg}).eq("id", r_row['id']).execute()
-                            st.success("Player Updated!")
-                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            try:
+                                supabase.table("rosters").update({"team_name": new_rt, "player_name": new_rn, "position": new_rp, "grad_year": new_rg}).eq("id", r_row['id']).execute()
+                                st.success("Player Updated!")
+                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            except:
+                                st.error("Error updating player.")
                         if c_del.form_submit_button("Delete Player"):
-                            supabase.table("rosters").delete().eq("id", r_row['id']).execute()
-                            st.success("Player Deleted!")
-                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            try:
+                                supabase.table("rosters").delete().eq("id", r_row['id']).execute()
+                                st.success("Player Deleted!")
+                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            except:
+                                st.error("Error deleting player.")
         else:
             st.info("No rosters created yet.")
             
@@ -256,15 +274,21 @@ with tab2:
                         c_up_t, c_del_t = st.columns(2)
                         if c_up_t.form_submit_button("Rename Program"):
                             if new_t_name != sel_t:
-                                supabase.table("teams").update({"team_name": new_t_name}).eq("team_name", sel_t).execute()
-                                supabase.table("rosters").update({"team_name": new_t_name}).eq("team_name", sel_t).execute()
-                                supabase.table("evaluations").update({"current_school": new_t_name}).eq("current_school", sel_t).execute()
-                                st.success(f"Renamed to {new_t_name}")
-                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                                try:
+                                    supabase.table("teams").update({"team_name": new_t_name}).eq("team_name", sel_t).execute()
+                                    supabase.table("rosters").update({"team_name": new_t_name}).eq("team_name", sel_t).execute()
+                                    supabase.table("evaluations").update({"current_school": new_t_name}).eq("current_school", sel_t).execute()
+                                    st.success(f"Renamed to {new_t_name}")
+                                    st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                                except:
+                                    st.error("Error renaming program.")
                         if c_del_t.form_submit_button("Delete Program"):
-                            supabase.table("teams").delete().eq("team_name", sel_t).execute()
-                            st.success(f"Deleted {sel_t}")
-                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            try:
+                                supabase.table("teams").delete().eq("team_name", sel_t).execute()
+                                st.success(f"Deleted {sel_t}")
+                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            except:
+                                st.error("Error deleting program.")
 
 # --- TAB 3: PLAYER PROFILES ---
 with tab3:
@@ -313,13 +337,19 @@ with tab3:
                     
                     c_up, c_del = st.columns(2)
                     if c_up.form_submit_button("Update Notes"):
-                        supabase.table("evaluations").update({"notes": e_notes}).eq("id", p_data['id']).execute()
-                        st.success("Notes Updated!")
-                        st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                        try:
+                            supabase.table("evaluations").update({"notes": e_notes}).eq("id", p_data['id']).execute()
+                            st.success("Notes Updated!")
+                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                        except:
+                            st.error("Error updating notes.")
                     if c_del.form_submit_button("Delete Evaluation"):
-                        supabase.table("evaluations").delete().eq("id", p_data['id']).execute()
-                        st.success("Evaluation Deleted!")
-                        st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                        try:
+                            supabase.table("evaluations").delete().eq("id", p_data['id']).execute()
+                            st.success("Evaluation Deleted!")
+                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                        except:
+                            st.error("Error deleting evaluation.")
     else:
         st.info("No evaluations available to view yet.")
 
@@ -354,12 +384,15 @@ with tab5:
             
             if st.form_submit_button("💾 Save Contact"):
                 if c_name:
-                    supabase.table("contacts").insert({
-                        "name": c_name, "role": c_role, "organization": c_org,
-                        "phone": c_phone, "email": c_email, "notes": c_notes
-                    }).execute()
-                    st.success("Contact saved!")
-                    st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    try:
+                        supabase.table("contacts").insert({
+                            "name": c_name, "role": c_role, "organization": c_org,
+                            "phone": c_phone, "email": c_email, "notes": c_notes
+                        }).execute()
+                        st.success("Contact saved!")
+                        st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    except:
+                        st.error("Error saving contact.")
     with col_c2:
         st.subheader("Directory")
         if not df_contacts.empty:
@@ -386,13 +419,19 @@ with tab5:
                         
                         c_up, c_del = st.columns(2)
                         if c_up.form_submit_button("Update Contact"):
-                            supabase.table("contacts").update({"name": new_cn, "role": new_cr, "organization": new_co, "phone": new_cp, "email": new_ce, "notes": new_cnot}).eq("id", c_row['id']).execute()
-                            st.success("Contact Updated!")
-                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            try:
+                                supabase.table("contacts").update({"name": new_cn, "role": new_cr, "organization": new_co, "phone": new_cp, "email": new_ce, "notes": new_cnot}).eq("id", c_row['id']).execute()
+                                st.success("Contact Updated!")
+                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            except:
+                                st.error("Error updating contact.")
                         if c_del.form_submit_button("Delete Contact"):
-                            supabase.table("contacts").delete().eq("id", c_row['id']).execute()
-                            st.success("Contact Deleted!")
-                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            try:
+                                supabase.table("contacts").delete().eq("id", c_row['id']).execute()
+                                st.success("Contact Deleted!")
+                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            except:
+                                st.error("Error deleting contact.")
         else:
             st.info("Directory is empty.")
 
@@ -410,12 +449,15 @@ with tab6:
             
             if st.form_submit_button("🗓️ Save to Calendar"):
                 if s_name:
-                    supabase.table("schedule").insert({
-                        "event_name": s_name, "event_date": str(s_date),
-                        "event_type": s_type, "location": s_loc, "notes": s_notes
-                    }).execute()
-                    st.success("Event added to calendar!")
-                    st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    try:
+                        supabase.table("schedule").insert({
+                            "event_name": s_name, "event_date": str(s_date),
+                            "event_type": s_type, "location": s_loc, "notes": s_notes
+                        }).execute()
+                        st.success("Event added to calendar!")
+                        st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                    except:
+                        st.error("Error saving event.")
     with col_s2:
         st.subheader("Upcoming Travel & Events")
         if not df_schedule.empty:
@@ -446,12 +488,18 @@ with tab6:
                         
                         c_up, c_del = st.columns(2)
                         if c_up.form_submit_button("Update Event"):
-                            supabase.table("schedule").update({"event_name": new_sn, "event_date": str(new_sd), "event_type": new_st, "location": new_sl, "notes": new_snot}).eq("id", s_row['id']).execute()
-                            st.success("Event Updated!")
-                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            try:
+                                supabase.table("schedule").update({"event_name": new_sn, "event_date": str(new_sd), "event_type": new_st, "location": new_sl, "notes": new_snot}).eq("id", s_row['id']).execute()
+                                st.success("Event Updated!")
+                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            except:
+                                st.error("Error updating event.")
                         if c_del.form_submit_button("Delete Event"):
-                            supabase.table("schedule").delete().eq("id", s_row['id']).execute()
-                            st.success("Event Deleted!")
-                            st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            try:
+                                supabase.table("schedule").delete().eq("id", s_row['id']).execute()
+                                st.success("Event Deleted!")
+                                st.cache_data.clear(); time.sleep(0.5); st.rerun()
+                            except:
+                                st.error("Error deleting event.")
         else:
             st.info("No upcoming events scheduled.")
